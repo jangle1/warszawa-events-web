@@ -183,7 +183,39 @@ async function vZrodla(){
     + section('instagram','📷 Instagram') + section('tiktok','🎵 TikTok');
 }
 
+async function vUzytkownicy(q=''){
+  const search = q ? '&or=(email.ilike.*'+encodeURIComponent(q)+'*,display_name.ilike.*'+encodeURIComponent(q)+'*)' : '';
+  const users = await sb('profiles?select=id,email,display_name,role,banned,created_at&order=created_at.desc&limit=200'+search);
+  const me = JSON.parse(atob(TOKEN.split('.')[1])).sub;
+  return `<h2>Użytkownicy (${users.length})</h2>
+    <div class="card row">
+      <input class="grow" id="uq" placeholder="Szukaj po e-mailu lub pseudonimie…" value="${esc(q)}" onkeydown="if(event.key==='Enter')go('uzytkownicy',this.value)">
+      <button class="plain" onclick="go('uzytkownicy', $('#uq').value)">Szukaj</button>
+    </div>` + users.map(u => `
+    <div class="card"><div class="row">
+      <div class="grow">
+        <h3>${esc(u.display_name ?? '—')}
+          ${u.role==='admin' ? '<span class="pill" style="background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff">admin</span>' : ''}
+          ${u.banned ? '<span class="pill" style="background:rgba(229,72,77,.15);color:var(--bad)">zbanowany</span>' : ''}
+          ${u.id===me ? '<span class="pill">to Ty</span>' : ''}</h3>
+        <div class="muted">${esc(u.email ?? '')} · dołączył ${fmt(u.created_at)}</div>
+      </div>
+      ${u.id===me ? '' :
+        (u.role==='admin'
+          ? '<button class="plain" onclick="setRole(\''+u.id+'\',\'user\')">Odbierz admina</button>'
+          : '<button class="plain" onclick="setRole(\''+u.id+'\',\'admin\')">Nadaj admina</button>')
+        + (u.banned
+          ? '<button class="ok" onclick="setBan(\''+u.id+'\',false)">Odbanuj</button>'
+          : '<button class="bad" onclick="setBan(\''+u.id+'\',true)">Zbanuj</button>')}
+    </div></div>`).join('');
+}
+
 // ---------- AKCJE ----------
+window.setRole = async (id, role) => { await sb('profiles?id=eq.'+id, {method:'PATCH', body: JSON.stringify({role})}); go(VIEW); };
+window.setBan = async (id, banned) => {
+  if (banned && !confirm('Zbanować tego użytkownika? Nie będzie mógł dodawać opinii ani zgłoszeń.')) return;
+  await sb('profiles?id=eq.'+id, {method:'PATCH', body: JSON.stringify({banned})}); go(VIEW);
+};
 window.setStatus = async (id, status) => { await sb('events?id=eq.'+id, {method:'PATCH', body: JSON.stringify({status})}); go(VIEW); };
 window.modReview = async (id, status) => { await sb('reviews?id=eq.'+id, {method:'PATCH', body: JSON.stringify({status})}); go(VIEW); };
 window.resetReports = async (id) => { await sb('events?id=eq.'+id, {method:'PATCH', body: JSON.stringify({inactive_reports_count:0})}); go(VIEW); };
@@ -271,6 +303,7 @@ const TABS = [
   ['wydarzenia','Wydarzenia', vWydarzenia],
   ['opinie','Opinie', vOpinie],
   ['raporty','Nieaktualne', vRaporty],
+  ['uzytkownicy','Użytkownicy', vUzytkownicy],
   ['zrodla','Źródła', vZrodla],
 ];
 
