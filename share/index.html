@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Warszawa Events — wydarzenie</title>
+<meta property="og:title" content="Warszawa Events">
+<meta property="og:description" content="Wydarzenia i promocje w Warszawie">
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, system-ui, sans-serif; margin: 0; background: #f6f5fa; color: #111; }
+  @media (prefers-color-scheme: dark) { body { background: #111; color: #eee; } .card { background: #1d1d22 !important; } }
+  .wrap { max-width: 480px; margin: 0 auto; padding: 16px; }
+  .card { background: #fff; border-radius: 20px; overflow: hidden; box-shadow: 0 6px 24px rgba(0,0,0,.12); }
+  .hero { width: 100%; height: 240px; object-fit: cover; display: block; background: #ddd; }
+  .body { padding: 20px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  .accent { width: 64px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, #7C3AED, #DB2777); margin-bottom: 14px; }
+  .meta { color: #777; font-size: 15px; margin: 4px 0; }
+  .desc { font-size: 15px; line-height: 1.5; margin-top: 12px; white-space: pre-wrap; }
+  .btn { display: block; text-align: center; text-decoration: none; font-weight: 700; padding: 14px; border-radius: 14px; margin-top: 18px; }
+  .primary { background: linear-gradient(135deg, #7C3AED, #DB2777); color: #fff; }
+  .secondary { background: rgba(124, 58, 237, .12); color: #7C3AED; }
+  .foot { text-align: center; color: #999; font-size: 12px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap"><div class="card" id="card"><div class="body">Wczytuję…</div></div>
+<div class="foot">Warszawa Events — wydarzenia i promocje w Warszawie</div></div>
+<script>
+const URL_ = 'https://pbctamqcmaihrdcyjlzg.supabase.co';
+const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBiY3RhbXFjbWFpaHJkY3lqbHpnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI5MzA1MDQsImV4cCI6MjA5ODUwNjUwNH0.VoUohXMcFXSCihvjBM-FQT1MtY6ZNJvIUF-fFYUUmL8';
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const fmt = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const days = ['niedz.','pon.','wt.','śr.','czw.','pt.','sob.'];
+  const months = ['sty','lut','mar','kwi','maj','cze','lip','sie','wrz','paź','lis','gru'];
+  let out = days[d.getDay()] + ' ' + d.getDate() + ' ' + months[d.getMonth()] + ' ' + d.getFullYear();
+  if (!(d.getHours() === 0 && d.getMinutes() === 0)) {
+    out += ', ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+  }
+  return out;
+};
+(async () => {
+  const id = new URLSearchParams(location.search).get('id');
+  const card = document.getElementById('card');
+  try {
+    const res = await fetch(URL_ + '/rest/v1/events?id=eq.' + encodeURIComponent(id)
+      + '&select=id,title,description,address,starts_at,image_url,source_url',
+      { headers: { apikey: ANON, Authorization: 'Bearer ' + ANON } });
+    const [e] = await res.json();
+    if (!e) throw new Error('nie znaleziono');
+    document.title = e.title + ' — Warszawa Events';
+    card.innerHTML =
+      (e.image_url ? '<img class="hero" src="' + esc(e.image_url) + '" alt="">' : '')
+      + '<div class="body"><h1>' + esc(e.title) + '</h1><div class="accent"></div>'
+      + (e.starts_at ? '<div class="meta">🗓 ' + esc(fmt(e.starts_at)) + '</div>' : '')
+      + (e.address ? '<div class="meta">📍 ' + esc(e.address) + '</div>' : '')
+      + (e.description ? '<div class="desc">' + esc(e.description.slice(0, 400)) + (e.description.length > 400 ? '…' : '') + '</div>' : '')
+      + '<a class="btn primary" href="appkamain://event/' + esc(e.id) + '">Otwórz w aplikacji</a>'
+      + (e.source_url ? '<a class="btn secondary" href="' + esc(e.source_url) + '">Strona wydarzenia</a>' : '')
+      + '</div>';
+  } catch {
+    card.innerHTML = '<div class="body"><h1>Nie znaleziono wydarzenia</h1><div class="accent"></div></div>';
+  }
+})();
+</script>
+</body>
+</html>

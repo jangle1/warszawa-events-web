@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Warszawa Events — Panel admina</title>
+<style>
+  :root { color-scheme: light dark; --brand:#7C3AED; --brand2:#DB2777; --ok:#30A46C; --bad:#E5484D; --warn:#F59E0B; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, sans-serif; margin:0; background:#f4f3f8; color:#111; }
+  @media (prefers-color-scheme: dark) { body { background:#101014; color:#eee; } .card,.top,dialog { background:#1b1b21 !important; } input,textarea,select { background:#26262e !important; color:#eee !important; border-color:#333 !important; } }
+  .top { position:sticky; top:0; background:#fff; padding:10px 16px; display:flex; gap:8px; align-items:center; box-shadow:0 2px 12px rgba(0,0,0,.08); z-index:5; flex-wrap:wrap; }
+  .logo { font-weight:800; background:linear-gradient(90deg,var(--brand),var(--brand2)); -webkit-background-clip:text; background-clip:text; color:transparent; margin-right:8px; }
+  .tab { border:0; background:transparent; padding:8px 12px; border-radius:10px; cursor:pointer; font-weight:600; color:inherit; }
+  .tab.on { background:linear-gradient(135deg,var(--brand),var(--brand2)); color:#fff; }
+  .badge { background:var(--bad); color:#fff; border-radius:99px; font-size:11px; padding:1px 7px; margin-left:4px; }
+  main { max-width:1000px; margin:0 auto; padding:16px; }
+  .card { background:#fff; border-radius:14px; padding:14px 16px; margin-bottom:10px; box-shadow:0 2px 10px rgba(0,0,0,.05); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .grow { flex:1; min-width:200px; }
+  h3 { margin:0 0 4px; font-size:16px; }
+  .muted { color:#888; font-size:13px; }
+  button { border:0; border-radius:10px; padding:8px 14px; font-weight:600; cursor:pointer; }
+  .ok { background:var(--ok); color:#fff; } .bad { background:var(--bad); color:#fff; }
+  .plain { background:rgba(124,58,237,.12); color:var(--brand); }
+  .warn { background:var(--warn); color:#fff; }
+  input, textarea, select { width:100%; padding:9px 11px; border:1px solid #ddd; border-radius:10px; font-size:14px; }
+  label { font-size:12px; font-weight:700; color:#888; display:block; margin:8px 0 3px; text-transform:uppercase; letter-spacing:.4px; }
+  dialog { border:0; border-radius:16px; padding:20px; width:min(560px,92vw); box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  dialog::backdrop { background:rgba(0,0,0,.45); }
+  .login { max-width:360px; margin:12vh auto; }
+  .gbtn { background:linear-gradient(135deg,var(--brand),var(--brand2)); color:#fff; width:100%; padding:12px; margin-top:12px; }
+  img.thumb { width:56px; height:56px; object-fit:cover; border-radius:10px; }
+  .pill { font-size:11px; font-weight:700; padding:2px 8px; border-radius:99px; background:rgba(124,58,237,.12); color:var(--brand); }
+  .stat { font-size:24px; font-weight:800; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const URL_ = "https://pbctamqcmaihrdcyjlzg.supabase.co";
+const ANON = "sb_publishable_tNnJ_kshfj7DOYEAGzuoCg_sFdEuqNb";
+let TOKEN = localStorage.getItem('admtok') || '';
+let VIEW = 'zgloszenia';
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const fmt = (iso) => iso ? new Date(iso).toLocaleString('pl-PL', {dateStyle:'medium', timeStyle:'short'}) : '—';
+
+async function sb(path, opts={}) {
+  const res = await fetch(URL_ + '/rest/v1/' + path, {
+    ...opts,
+    headers: { apikey: ANON, Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json',
+      Prefer: opts.method && opts.method !== 'GET' ? 'return=representation' : 'count=exact', ...(opts.headers||{}) },
+  });
+  if (res.status === 401) { logout(); throw new Error('Sesja wygasła — zaloguj się ponownie'); }
+  if (!res.ok) throw new Error(await res.text());
+  return res.status === 204 ? null : res.json();
+}
+
+function logout(){ TOKEN=''; localStorage.removeItem('admtok'); render(); }
+
+async function login(e){
+  e.preventDefault();
+  const email = $('#em').value, password = $('#pw').value;
+  $('#err').textContent = '';
+  const res = await fetch(URL_ + '/auth/v1/token?grant_type=password', {
+    method:'POST', headers:{apikey:ANON,'Content-Type':'application/json'},
+    body: JSON.stringify({email, password}),
+  });
+  const data = await res.json();
+  if (!data.access_token) { $('#err').textContent = 'Błędny e-mail lub hasło'; return; }
+  TOKEN = data.access_token;
+  // sprawdź rolę admina
+  const uid = JSON.parse(atob(TOKEN.split('.')[1])).sub;
+  const prof = await sb('profiles?id=eq.' + uid + '&select=role');
+  if (prof?.[0]?.role !== 'admin') { $('#err').textContent = 'To konto nie ma uprawnień admina'; TOKEN=''; return; }
+  localStorage.setItem('admtok', TOKEN);
+  render();
+}
+
+// ---------- WIDOKI ----------
+async function vZgloszenia(){
+  const evs = await sb('events?status=eq.pending&select=*&order=created_at.desc&limit=100');
+  return '<h2>Zgłoszenia wydarzeń ('+evs.length+')</h2>' + (evs.length ? evs.map(e => `
+    <div class="card"><div class="row">
+      ${e.image_url ? '<img class="thumb" src="'+esc(e.image_url)+'">' : ''}
+      <div class="grow"><h3>${esc(e.title)}</h3>
+        <div class="muted">${fmt(e.starts_at)} · ${esc(e.address ?? 'brak adresu')} · od: ${e.source_type}</div>
+        <div class="muted">${esc((e.description ?? '').slice(0,180))}</div></div>
+      <button class="ok" onclick="setStatus('${e.id}','approved')">Akceptuj</button>
+      <button class="bad" onclick="setStatus('${e.id}','rejected')">Odrzuć</button>
+      <button class="plain" onclick="editEvent('${e.id}')">Edytuj</button>
+    </div></div>`).join('') : '<div class="card muted">Brak oczekujących zgłoszeń 🎉</div>');
+}
+
+async function vWydarzenia(q=''){
+  const filter = q ? '&title=ilike.*' + encodeURIComponent(q) + '*' : '';
+  const evs = await sb('events?select=*&order=starts_at.asc.nullslast&limit=80&status=in.(approved,expired)' + filter);
+  return `<h2>Wydarzenia</h2>
+    <div class="card row">
+      <input class="grow" id="q" placeholder="Szukaj po tytule…" value="${esc(q)}" onkeydown="if(event.key==='Enter')go('wydarzenia',this.value)">
+      <button class="plain" onclick="go('wydarzenia', $('#q').value)">Szukaj</button>
+      <button class="gbtn" style="width:auto;margin:0" onclick="editEvent(null)">+ Dodaj wydarzenie</button>
+    </div>` + evs.map(e => `
+    <div class="card"><div class="row">
+      ${e.image_url ? '<img class="thumb" src="'+esc(e.image_url)+'">' : ''}
+      <div class="grow"><h3>${esc(e.title)} ${e.status==='expired' ? '<span class="pill" style="background:rgba(229,72,77,.15);color:var(--bad)">wygaszone</span>' : ''}</h3>
+        <div class="muted">${fmt(e.starts_at)} · ${esc(e.address ?? '—')} ${e.inactive_reports_count ? '· ⚠️ zgłoszeń: '+e.inactive_reports_count : ''}</div></div>
+      <button class="plain" onclick="editEvent('${e.id}')">Edytuj</button>
+      ${e.status==='approved'
+        ? '<button class="warn" onclick="setStatus(\''+e.id+'\',\'expired\')">Wygaś</button>'
+        : '<button class="ok" onclick="setStatus(\''+e.id+'\',\'approved\')">Przywróć</button>'}
+    </div></div>`).join('');
+}
+
+async function vOpinie(){
+  const revs = await sb('reviews?status=in.(pending,flagged)&select=*,events(title),profiles(display_name)&order=created_at.desc&limit=100');
+  return '<h2>Opinie do moderacji ('+revs.length+')</h2>' + (revs.length ? revs.map(r => `
+    <div class="card"><div class="row">
+      <div class="grow"><h3>${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)} — ${esc(r.profiles?.display_name ?? '?')}</h3>
+        <div class="muted">do: ${esc(r.events?.title ?? '—')} · ${fmt(r.created_at)}</div>
+        <div>${esc(r.body ?? '(bez tekstu)')}</div></div>
+      <button class="ok" onclick="modReview('${r.id}','approved')">Zatwierdź</button>
+      <button class="bad" onclick="modReview('${r.id}','rejected')">Odrzuć</button>
+    </div></div>`).join('') : '<div class="card muted">Wszystko zmoderowane 🎉</div>');
+}
+
+async function vRaporty(){
+  const evs = await sb('events?inactive_reports_count=gt.0&select=*&order=inactive_reports_count.desc&limit=50');
+  return '<h2>Zgłoszone jako nieaktualne</h2>' + (evs.length ? evs.map(e => `
+    <div class="card"><div class="row">
+      <div class="grow"><h3>${esc(e.title)}</h3>
+        <div class="muted">zgłoszeń: <b>${e.inactive_reports_count}</b> · ${fmt(e.starts_at)} · status: ${e.status}</div></div>
+      <button class="warn" onclick="setStatus('${e.id}','expired')">Wygaś</button>
+      <button class="plain" onclick="resetReports('${e.id}')">Wyzeruj licznik</button>
+    </div></div>`).join('') : '<div class="card muted">Brak zgłoszeń 🎉</div>');
+}
+
+async function vZrodla(){
+  const src = await sb('scraper_sources?select=*&order=is_active.desc,created_at.desc&limit=200');
+  return `<h2>Źródła scraperów (${src.filter(s=>s.is_active).length} aktywnych)</h2>
+    <div class="card row">
+      <input class="grow" id="surl" placeholder="https://adres-strony-z-wydarzeniami…">
+      <input style="width:180px" id="sname" placeholder="Nazwa">
+      <button class="gbtn" style="width:auto;margin:0" onclick="addSource()">+ Dodaj</button>
+    </div>` + src.map(s => `
+    <div class="card"><div class="row">
+      <div class="grow"><h3>${esc(s.name)} <span class="pill">${s.platform}</span></h3>
+        <div class="muted">${esc(s.url_or_handle)} · ostatni przebieg: ${fmt(s.last_run_at)}</div></div>
+      <button class="${s.is_active?'bad':'ok'}" onclick="toggleSource('${s.id}',${!s.is_active})">${s.is_active?'Wyłącz':'Włącz'}</button>
+    </div></div>`).join('');
+}
+
+// ---------- AKCJE ----------
+window.setStatus = async (id, status) => { await sb('events?id=eq.'+id, {method:'PATCH', body: JSON.stringify({status})}); go(VIEW); };
+window.modReview = async (id, status) => { await sb('reviews?id=eq.'+id, {method:'PATCH', body: JSON.stringify({status})}); go(VIEW); };
+window.resetReports = async (id) => { await sb('events?id=eq.'+id, {method:'PATCH', body: JSON.stringify({inactive_reports_count:0})}); go(VIEW); };
+window.toggleSource = async (id, on) => { await sb('scraper_sources?id=eq.'+id, {method:'PATCH', body: JSON.stringify({is_active:on})}); go(VIEW); };
+window.addSource = async () => {
+  const url = $('#surl').value.trim(); if (!url) return;
+  await sb('scraper_sources', {method:'POST', body: JSON.stringify({name: $('#sname').value.trim() || url, platform:'web', url_or_handle:url, is_active:true, config:{added_by:'admin'}})});
+  go(VIEW);
+};
+
+window.editEvent = async (id) => {
+  let e = { title:'', description:'', starts_at:'', ends_at:'', address:'', image_url:'', is_free:false, is_promotion:false };
+  if (id) e = (await sb('events?id=eq.'+id+'&select=*'))[0];
+  const dlg = document.createElement('dialog');
+  const toLocal = (iso) => iso ? new Date(iso).toISOString().slice(0,16) : '';
+  dlg.innerHTML = `<h3>${id?'Edytuj':'Dodaj'} wydarzenie</h3>
+    <label>Tytuł</label><input id="f_t" value="${esc(e.title)}">
+    <label>Opis</label><textarea id="f_d" rows="3">${esc(e.description ?? '')}</textarea>
+    <label>Start</label><input id="f_s" type="datetime-local" value="${toLocal(e.starts_at)}">
+    <label>Koniec (opcjonalnie)</label><input id="f_e" type="datetime-local" value="${toLocal(e.ends_at)}">
+    <label>Adres / miejsce</label><input id="f_a" value="${esc(e.address ?? '')}">
+    <label>URL zdjęcia (opcjonalnie)</label><input id="f_i" value="${esc(e.image_url ?? '')}">
+    <div class="row" style="margin-top:10px">
+      <label style="margin:0"><input type="checkbox" id="f_free" ${e.is_free?'checked':''} style="width:auto"> darmowe</label>
+      <label style="margin:0"><input type="checkbox" id="f_promo" ${e.is_promotion?'checked':''} style="width:auto"> promocja</label>
+    </div>
+    <div class="row" style="margin-top:14px; justify-content:flex-end">
+      <button class="plain" onclick="this.closest('dialog').close()">Anuluj</button>
+      <button class="ok" id="f_save">Zapisz</button>
+    </div>`;
+  document.body.appendChild(dlg); dlg.showModal();
+  dlg.querySelector('#f_save').onclick = async () => {
+    const addr = dlg.querySelector('#f_a').value.trim();
+    const body = {
+      title: dlg.querySelector('#f_t').value.trim(),
+      description: dlg.querySelector('#f_d').value.trim() || null,
+      starts_at: dlg.querySelector('#f_s').value ? new Date(dlg.querySelector('#f_s').value).toISOString() : null,
+      ends_at: dlg.querySelector('#f_e').value ? new Date(dlg.querySelector('#f_e').value).toISOString() : null,
+      address: addr || null,
+      image_url: dlg.querySelector('#f_i').value.trim() || null,
+      is_free: dlg.querySelector('#f_free').checked,
+      is_promotion: dlg.querySelector('#f_promo').checked,
+    };
+    // geokodowanie adresu (Nominatim, z przeglądarki)
+    if (addr && !/^warszawa$/i.test(addr)) {
+      try {
+        const g = await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=pl&q=' + encodeURIComponent(addr + ', Warszawa, Polska'))).json();
+        if (g[0]) body.location = 'SRID=4326;POINT(' + g[0].lon + ' ' + g[0].lat + ')';
+      } catch {}
+    }
+    if (id) await sb('events?id=eq.'+id, {method:'PATCH', body: JSON.stringify(body)});
+    else await sb('events', {method:'POST', body: JSON.stringify({...body, source_type:'admin', status:'approved', verification_status:'verified'})});
+    dlg.close(); go(VIEW);
+  };
+};
+
+// ---------- RENDER ----------
+const TABS = [
+  ['zgloszenia','Zgłoszenia', vZgloszenia],
+  ['wydarzenia','Wydarzenia', vWydarzenia],
+  ['opinie','Opinie', vOpinie],
+  ['raporty','Nieaktualne', vRaporty],
+  ['zrodla','Źródła', vZrodla],
+];
+
+window.go = async (view, arg) => {
+  VIEW = view;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.v === view));
+  $('#main').innerHTML = '<div class="card muted">Wczytuję…</div>';
+  try {
+    const tab = TABS.find(t => t[0] === view);
+    $('#main').innerHTML = await tab[2](arg);
+  } catch (e) { $('#main').innerHTML = '<div class="card" style="color:var(--bad)">Błąd: ' + esc(e.message) + '</div>'; }
+};
+
+function render(){
+  if (!TOKEN) {
+    $('#app').innerHTML = `<div class="login card">
+      <h2><span class="logo">Warszawa Events</span> · Panel admina</h2>
+      <form onsubmit="login(event)">
+        <label>E-mail</label><input id="em" type="email" autocomplete="username">
+        <label>Hasło</label><input id="pw" type="password" autocomplete="current-password">
+        <div id="err" style="color:var(--bad);margin-top:8px;font-size:14px"></div>
+        <button class="gbtn">Zaloguj się</button>
+      </form></div>`;
+    return;
+  }
+  $('#app').innerHTML = `
+    <div class="top"><span class="logo">Warszawa Events</span>
+      ${TABS.map(t => '<button class="tab" data-v="'+t[0]+'" onclick="go(\''+t[0]+'\')">'+t[1]+'</button>').join('')}
+      <span style="flex:1"></span>
+      <button class="plain" onclick="logout()">Wyloguj</button>
+    </div><main id="main"></main>`;
+  go(VIEW);
+}
+window.login = login;
+render();
+</script>
+</body>
+</html>
