@@ -39,7 +39,7 @@
 <div id="app"></div>
 <script>
 const URL_ = "https://pbctamqcmaihrdcyjlzg.supabase.co";
-const ANON = "sb_publishable_tNnJ_kshfj7DOYEAGzuoCg_sFdEuqNb";
+const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBiY3RhbXFjbWFpaHJkY3lqbHpnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI5MzA1MDQsImV4cCI6MjA5ODUwNjUwNH0.VoUohXMcFXSCihvjBM-FQT1MtY6ZNJvIUF-fFYUUmL8";
 let TOKEN = localStorage.getItem('admtok') || '';
 let VIEW = 'zgloszenia';
 
@@ -114,16 +114,24 @@ async function vWydarzenia(q=''){
     </div></div>`).join('');
 }
 
-async function vOpinie(){
-  const revs = await sb('reviews?status=in.(pending,flagged)&select=*,events(title),profiles(display_name)&order=created_at.desc&limit=100');
-  return '<h2>Opinie do moderacji ('+revs.length+')</h2>' + (revs.length ? revs.map(r => `
+async function vOpinie(q=''){
+  const search = q ? '&or=(body.ilike.*'+encodeURIComponent(q)+'*)' : '';
+  const revs = await sb('reviews?select=*,events(title),profiles(display_name)&order=created_at.desc&limit=100'+search);
+  const badge = (st) => st==='approved' ? '<span class="pill" style="background:rgba(48,164,108,.15);color:var(--ok)">widoczna</span>'
+    : st==='rejected' ? '<span class="pill" style="background:rgba(229,72,77,.15);color:var(--bad)">ukryta</span>'
+    : '<span class="pill" style="background:rgba(245,158,11,.15);color:var(--warn)">oczekuje</span>';
+  return `<h2>Opinie</h2>
+    <div class="card row">
+      <input class="grow" id="rq" placeholder="Szukaj w treści opinii…" value="${esc(q)}" onkeydown="if(event.key==='Enter')go('opinie',this.value)">
+      <button class="plain" onclick="go('opinie', $('#rq').value)">Szukaj</button>
+    </div>` + (revs.length ? revs.map(r => `
     <div class="card"><div class="row">
-      <div class="grow"><h3>${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)} — ${esc(r.profiles?.display_name ?? '?')}</h3>
+      <div class="grow"><h3>${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)} — ${esc(r.profiles?.display_name ?? '?')} ${badge(r.status)}</h3>
         <div class="muted">do: ${esc(r.events?.title ?? '—')} · ${fmt(r.created_at)}</div>
         <div>${esc(r.body ?? '(bez tekstu)')}</div></div>
-      <button class="ok" onclick="modReview('${r.id}','approved')">Zatwierdź</button>
-      <button class="bad" onclick="modReview('${r.id}','rejected')">Odrzuć</button>
-    </div></div>`).join('') : '<div class="card muted">Wszystko zmoderowane 🎉</div>');
+      ${r.status!=='approved' ? '<button class="ok" onclick="modReview(\''+r.id+'\',\'approved\')">Pokaż</button>' : ''}
+      ${r.status!=='rejected' ? '<button class="bad" onclick="modReview(\''+r.id+'\',\'rejected\')">Ukryj</button>' : ''}
+    </div></div>`).join('') : '<div class="card muted">Brak opinii.</div>');
 }
 
 async function vRaporty(){
@@ -138,18 +146,41 @@ async function vRaporty(){
 }
 
 async function vZrodla(){
-  const src = await sb('scraper_sources?select=*&order=is_active.desc,created_at.desc&limit=200');
-  return `<h2>Źródła scraperów (${src.filter(s=>s.is_active).length} aktywnych)</h2>
-    <div class="card row">
-      <input class="grow" id="surl" placeholder="https://adres-strony-z-wydarzeniami…">
-      <input style="width:180px" id="sname" placeholder="Nazwa">
-      <button class="gbtn" style="width:auto;margin:0" onclick="addSource()">+ Dodaj</button>
-    </div>` + src.map(s => `
+  const src = await sb('scraper_sources?select=*&order=platform.asc,is_active.desc&limit=300');
+  const groups = { web:[], facebook:[], instagram:[], tiktok:[] };
+  src.forEach(s => (groups[s.platform] ?? (groups[s.platform]=[])).push(s));
+  const kindLabel = { profile:'konto', hashtag:'hashtag', query:'fraza', undefined:'strona' };
+  const section = (plat, title) => (groups[plat]||[]).length ? '<h3 style="margin:14px 4px 6px">'+title+' ('+groups[plat].filter(s=>s.is_active).length+' aktywnych)</h3>' + groups[plat].map(s => `
     <div class="card"><div class="row">
-      <div class="grow"><h3>${esc(s.name)} <span class="pill">${s.platform}</span></h3>
-        <div class="muted">${esc(s.url_or_handle)} · ostatni przebieg: ${fmt(s.last_run_at)}</div></div>
+      <div class="grow"><b>${esc(s.config?.kind ? (s.config.kind==='hashtag'?'#':s.config.kind==='profile'?'@':'') : '')}${esc(s.url_or_handle)}</b>
+        <span class="pill">${kindLabel[s.config?.kind]}</span>
+        <div class="muted">${esc(s.name)} · ostatnio: ${fmt(s.last_run_at)}</div></div>
       <button class="${s.is_active?'bad':'ok'}" onclick="toggleSource('${s.id}',${!s.is_active})">${s.is_active?'Wyłącz':'Włącz'}</button>
-    </div></div>`).join('');
+      <button class="plain" onclick="delSource('${s.id}')">Usuń</button>
+    </div></div>`).join('') : '';
+  return `<h2>Źródła scraperów</h2>
+    <div class="card">
+      <div class="row">
+        <select id="splat" style="width:150px" onchange="document.getElementById('skindwrap').style.display=this.value==='web'?'none':'block'">
+          <option value="web">WWW (strona)</option>
+          <option value="facebook">Facebook</option>
+          <option value="instagram">Instagram</option>
+          <option value="tiktok">TikTok</option>
+        </select>
+        <div id="skindwrap" style="display:none;width:150px">
+          <select id="skind">
+            <option value="query">fraza wyszukiwania</option>
+            <option value="hashtag">hashtag</option>
+            <option value="profile">konto / profil</option>
+          </select>
+        </div>
+        <input class="grow" id="surl" placeholder="adres URL / @konto / #hashtag / fraza">
+        <button class="gbtn" style="width:auto;margin:0" onclick="addSource()">+ Dodaj</button>
+      </div>
+      <div class="muted" style="margin-top:6px">TikTok/Instagram/Facebook: wpisz nazwę konta, hashtag albo frazę (bez @ i #).</div>
+    </div>`
+    + section('web','🌐 Strony WWW') + section('facebook','📘 Facebook')
+    + section('instagram','📷 Instagram') + section('tiktok','🎵 TikTok');
 }
 
 // ---------- AKCJE ----------
@@ -157,27 +188,48 @@ window.setStatus = async (id, status) => { await sb('events?id=eq.'+id, {method:
 window.modReview = async (id, status) => { await sb('reviews?id=eq.'+id, {method:'PATCH', body: JSON.stringify({status})}); go(VIEW); };
 window.resetReports = async (id) => { await sb('events?id=eq.'+id, {method:'PATCH', body: JSON.stringify({inactive_reports_count:0})}); go(VIEW); };
 window.toggleSource = async (id, on) => { await sb('scraper_sources?id=eq.'+id, {method:'PATCH', body: JSON.stringify({is_active:on})}); go(VIEW); };
+window.delSource = async (id) => { if (confirm('Usunąć źródło?')) { await sb('scraper_sources?id=eq.'+id, {method:'DELETE'}); go(VIEW); } };
 window.addSource = async () => {
-  const url = $('#surl').value.trim(); if (!url) return;
-  await sb('scraper_sources', {method:'POST', body: JSON.stringify({name: $('#sname').value.trim() || url, platform:'web', url_or_handle:url, is_active:true, config:{added_by:'admin'}})});
+  const platform = $('#splat').value;
+  const val = $('#surl').value.trim(); if (!val) return;
+  const clean = val.replace(/^[@#]/, '');
+  const body = platform === 'web'
+    ? { name: clean, platform: 'web', url_or_handle: val, is_active: true, config: { added_by: 'admin' } }
+    : { name: platform+':'+$('#skind').value+':'+clean, platform, url_or_handle: clean, is_active: true, config: { kind: $('#skind').value, added_by: 'admin' } };
+  await sb('scraper_sources', { method:'POST', body: JSON.stringify(body) });
   go(VIEW);
 };
 
+// pełny formularz wydarzenia: kategoria, tagi, cykliczność, darmowe/promocja
+let CATS = null;
 window.editEvent = async (id) => {
-  let e = { title:'', description:'', starts_at:'', ends_at:'', address:'', image_url:'', is_free:false, is_promotion:false };
+  if (!CATS) CATS = await sb('categories?select=id,slug,name&order=name');
+  let e = { title:'', description:'', starts_at:'', ends_at:'', address:'', image_url:'', tags:[], category_id:'', is_free:false, is_promotion:false, is_recurring:false, recurrence_rule:'weekly' };
   if (id) e = (await sb('events?id=eq.'+id+'&select=*'))[0];
   const dlg = document.createElement('dialog');
   const toLocal = (iso) => iso ? new Date(iso).toISOString().slice(0,16) : '';
+  const catOpts = CATS.map(c => '<option value="'+c.id+'" '+(c.id===e.category_id?'selected':'')+'>'+esc(c.name)+'</option>').join('');
   dlg.innerHTML = `<h3>${id?'Edytuj':'Dodaj'} wydarzenie</h3>
     <label>Tytuł</label><input id="f_t" value="${esc(e.title)}">
     <label>Opis</label><textarea id="f_d" rows="3">${esc(e.description ?? '')}</textarea>
+    <label>Kategoria</label><select id="f_c"><option value="">— wybierz —</option>${catOpts}</select>
     <label>Start</label><input id="f_s" type="datetime-local" value="${toLocal(e.starts_at)}">
     <label>Koniec (opcjonalnie)</label><input id="f_e" type="datetime-local" value="${toLocal(e.ends_at)}">
     <label>Adres / miejsce</label><input id="f_a" value="${esc(e.address ?? '')}">
+    <label>Tagi (po przecinku)</label><input id="f_tags" value="${esc((e.tags ?? []).join(', '))}" placeholder="jazz, na świeżym powietrzu, darmowe">
     <label>URL zdjęcia (opcjonalnie)</label><input id="f_i" value="${esc(e.image_url ?? '')}">
     <div class="row" style="margin-top:10px">
       <label style="margin:0"><input type="checkbox" id="f_free" ${e.is_free?'checked':''} style="width:auto"> darmowe</label>
       <label style="margin:0"><input type="checkbox" id="f_promo" ${e.is_promotion?'checked':''} style="width:auto"> promocja</label>
+      <label style="margin:0"><input type="checkbox" id="f_rec" ${e.is_recurring?'checked':''} style="width:auto" onchange="document.getElementById('f_recwrap').style.display=this.checked?'block':'none'"> cykliczne</label>
+    </div>
+    <div id="f_recwrap" style="display:${e.is_recurring?'block':'none'}">
+      <label>Powtarzalność</label>
+      <select id="f_recrule">
+        <option value="weekly" ${e.recurrence_rule==='weekly'?'selected':''}>co tydzień</option>
+        <option value="biweekly" ${e.recurrence_rule==='biweekly'?'selected':''}>co 2 tygodnie</option>
+        <option value="monthly" ${e.recurrence_rule==='monthly'?'selected':''}>co miesiąc</option>
+      </select>
     </div>
     <div class="row" style="margin-top:14px; justify-content:flex-end">
       <button class="plain" onclick="this.closest('dialog').close()">Anuluj</button>
@@ -186,17 +238,21 @@ window.editEvent = async (id) => {
   document.body.appendChild(dlg); dlg.showModal();
   dlg.querySelector('#f_save').onclick = async () => {
     const addr = dlg.querySelector('#f_a').value.trim();
+    const rec = dlg.querySelector('#f_rec').checked;
     const body = {
       title: dlg.querySelector('#f_t').value.trim(),
       description: dlg.querySelector('#f_d').value.trim() || null,
+      category_id: dlg.querySelector('#f_c').value || null,
       starts_at: dlg.querySelector('#f_s').value ? new Date(dlg.querySelector('#f_s').value).toISOString() : null,
       ends_at: dlg.querySelector('#f_e').value ? new Date(dlg.querySelector('#f_e').value).toISOString() : null,
       address: addr || null,
+      tags: dlg.querySelector('#f_tags').value.split(',').map(x => x.trim().toLowerCase()).filter(Boolean),
       image_url: dlg.querySelector('#f_i').value.trim() || null,
       is_free: dlg.querySelector('#f_free').checked,
       is_promotion: dlg.querySelector('#f_promo').checked,
+      is_recurring: rec,
+      recurrence_rule: rec ? dlg.querySelector('#f_recrule').value : null,
     };
-    // geokodowanie adresu (Nominatim, z przeglądarki)
     if (addr && !/^warszawa$/i.test(addr)) {
       try {
         const g = await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=pl&q=' + encodeURIComponent(addr + ', Warszawa, Polska'))).json();
